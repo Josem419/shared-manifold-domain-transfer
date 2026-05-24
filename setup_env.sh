@@ -18,4 +18,4 @@ else
 fi
 
 echo "Added ${RUNWAY_SMDT_ROOT}/src to PYTHONPATH"
-echo "Environment setup complete"
+echo "Environment setup complete""
