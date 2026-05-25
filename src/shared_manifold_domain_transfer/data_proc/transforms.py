@@ -64,7 +64,6 @@ def get_crop_transforms(crop_size: int = RUNWAY_CROP_EVAL_SIZE) -> transforms.Co
 
 def denormalize(tensor):
     """Undo ImageNet normalisation for visualisation. Returns tensor in [0, 1]."""
-    import torch
     mean = torch.tensor(IMAGENET_MEAN, device=tensor.device).view(3, 1, 1)
     std  = torch.tensor(IMAGENET_STD,  device=tensor.device).view(3, 1, 1)
     return (tensor * std + mean).clamp(0.0, 1.0)

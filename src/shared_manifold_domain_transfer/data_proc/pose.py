@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import sys
 from dataclasses import dataclass
 from typing import Optional
 
@@ -264,7 +265,6 @@ class PoseVolumeSampler:
         return dists.min(axis=1)                                    # (M,)
 
 if __name__ == "__main__":
-    import sys
 
     print("=== PoseProcessor / ApproachLimits / PoseVolumeSampler unit tests ===\n")
 

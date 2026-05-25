@@ -24,6 +24,9 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 from PIL import Image
+import sys
+import argparse
+import ast
 
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -277,7 +280,6 @@ class LARDDataset(Dataset):
         if corner_candidates:
             raw = row[corner_candidates[0]]
             if isinstance(raw, str):
-                import ast
                 data = ast.literal_eval(raw)
                 corners = np.array(data, dtype=np.float32).reshape(4, 2)
                 return corners
@@ -378,7 +380,6 @@ def make_loaders(
 
 # quick test of dataset and loaders
 if __name__ == "__main__":
-    import sys, argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", default="data/", help="Path to downloaded LARD V2 data")
