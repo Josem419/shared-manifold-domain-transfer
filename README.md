@@ -51,7 +51,8 @@ Key metric: **UMAP Silhouette Score**
 - 0.1–0.3 — moderate gap; inspect pose coverage plot
 - < 0.1 — weak gap; consider pose-conditional embeddings
 
-I-JEPA ViT-H/14 checkpoint (~9.6 GB): `models/IN22K-vit.h.14-900e.pth.tar`
+The I-JEPA weights are not in the repo due to size, but can be downloaded from the project releases or Hugging Face. Place the checkpoint at `models/IN22K-vit.h.14-900e.pth.tar` before running the baseline script.
+- I-JEPA ViT-H/14 checkpoint (~9.6 GB): `models/IN22K-vit.h.14-900e.pth.tar`
 
 Figures written to `outputs/umap_baseline/{full,crop}/`.
 
