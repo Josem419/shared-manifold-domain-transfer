@@ -43,7 +43,7 @@ log = logging.getLogger(__name__)
 
 # LARD V2 simulator column values (lower-cased for matching)
 _XPLANE_TAGS  = {"xplane", "x-plane", "xp11", "xp12"}
-_MSFS_TAGS    = {"msfs", "msfs2020", "microsoft flight simulator"}
+_MSFS_TAGS    = {"msfs", "msfs2020", "microsoft flight simulator", "flsim"}
 
 # Corner coordinate columns — LARD stores 4 corners as separate x/y columns
 # or as a single array. We try both conventions.
@@ -53,7 +53,9 @@ _CORNER_ALT_COLS = [
     "corner1_x", "corner2_x", "corner3_x", "corner4_x",
     "corner1_y", "corner2_y", "corner3_y", "corner4_y",
 ]
-_SIM_CANDIDATES = ["simulator", "sim", "source", "dataset", "domain"]
+# hf_config is the reliable persistent column ("xplane" or "flsim");
+# sim_tag is only added in-memory by visualize_dataset.py, not saved to parquet.
+_SIM_CANDIDATES = ["hf_config", "simulator", "sim", "source", "dataset", "domain"]
 _IMG_CANDIDATES = ["image", "img", "file", "filename", "filepath", "path", "image_path"]
 
 
