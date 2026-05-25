@@ -30,11 +30,11 @@ from PIL import Image
 
 matplotlib.use("Agg")
 
-from shared_manifold_domain_transfer.data.domain_odd import (
+from shared_manifold_domain_transfer.data_proc.domain_odd import (
     DOMAIN1_LIMITS,
     DOMAIN2_LIMITS,
 )
-from shared_manifold_domain_transfer.data.pose import PoseProcessor
+from shared_manifold_domain_transfer.data_proc.pose import PoseProcessor
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
@@ -338,4 +338,4 @@ def main(data_dir: str, output_dir: str, n_images: int) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main() # pylint: disable=no-value-for-parameter
