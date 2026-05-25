@@ -24,9 +24,8 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 from PIL import Image
-import sys
-import argparse
 import ast
+import click
 
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -379,18 +378,18 @@ def make_loaders(
     }
 
 # quick test of dataset and loaders
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", default="data/", help="Path to downloaded LARD V2 data")
-    parser.add_argument("--max_samples", type=int, default=8)
-    args = parser.parse_args()
-
+@click.command()
+@click.option("--data-dir",    default="data/",  show_default=True,
+              help="Path to downloaded LARD V2 data.")
+@click.option("--max-samples", default=8, show_default=True,
+              help="Samples per split for the smoke test.")
+def _smoke_test(data_dir: str, max_samples: int) -> None:
+    """Smoke-test the dataset loader: print one batch shape per split."""
     loaders = make_loaders(
-        data_dir=args.data_dir,
+        data_dir=data_dir,
         batch_size=4,
         num_workers=0,
-        max_samples=args.max_samples,
+        max_samples=max_samples,
     )
 
     for name, loader in loaders.items():
@@ -403,4 +402,6 @@ if __name__ == "__main__":
         print(f"  corners:     {batch['corners'].shape}  (normalised [0,1], crop at eval time)")
         print(f"  domain:      {batch['domain'].tolist()}")
 
-    sys.exit(0)
+
+if __name__ == "__main__":
+    _smoke_test()
