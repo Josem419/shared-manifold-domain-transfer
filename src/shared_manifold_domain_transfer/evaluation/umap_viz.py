@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 import torch
 import umap as umap_lib
 from sklearn.decomposition import PCA
+from sklearn.linear_model import LinearRegression
 from sklearn.metrics import silhouette_score
 from tqdm import tqdm
 
@@ -41,9 +42,14 @@ def extract_embeddings(
     encoder,
     loader,
     device: str = "cpu",
+    mode: str = "full",
 ) -> Dict[str, np.ndarray]:
     """
     Run all images through a frozen encoder and collect results.
+
+    Args:
+        mode: 'full' — CLS/mean-pool over full image (default)
+              'crop' — mean-pool of runway patch embeddings using corner bbox
 
     Returns:
         {
@@ -60,7 +66,11 @@ def extract_embeddings(
     with torch.no_grad():
         for batch in tqdm(loader, desc="Extracting embeddings"):
             imgs = batch["image"].to(dev)
-            embs = encoder(imgs).cpu().numpy()
+            if mode == "crop":
+                corners = batch["corners"].to(dev)
+                embs = encoder.get_runway_embedding(imgs, corners).cpu().numpy()
+            else:
+                embs = encoder(imgs).cpu().numpy()
             all_emb.append(embs)
             all_dom.append(batch["domain"].numpy())
             all_pose.append(batch["pose_vector"].numpy())
@@ -197,6 +207,113 @@ def plot_pose_coverage(
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
     log.info(f"Saved: {save_path}")
+    return save_path
+
+
+def plot_pose_conditioned_gap(
+    embeddings_dict: Dict[str, np.ndarray],
+    save_path: Optional[str] = None,
+) -> str:
+    """
+    Three-panel figure for paper use:
+
+      Panel A — UMAP coloured by along_track distance (pose gradient)
+                Shows pose drives most of the embedding structure.
+      Panel B — Same UMAP coloured by domain
+                Shows no clean domain separation in raw embedding space.
+      Panel C — UMAP of pose-residual embeddings, coloured by domain
+                Strips the linear pose component; remaining variation is
+                visual style — domain gap should emerge here.
+
+    Pose removal: fit LinearRegression(pose → embedding) on Domain 1 points,
+    then subtract the predicted pose component from every embedding.
+    """
+    embs    = embeddings_dict["embeddings"].astype(np.float32)   # (N, D)
+    poses   = embeddings_dict["poses"].astype(np.float32)         # (N, 6)
+    domains = embeddings_dict["domains"]                          # (N,)
+
+    # Fit pose → embedding linear model on Domain 1 (reference domain)
+    d1_mask = domains == 0
+    log.info(f"Fitting pose→embedding linear model on {d1_mask.sum()} Domain 1 points...")
+    reg = LinearRegression()
+    reg.fit(poses[d1_mask], embs[d1_mask])
+
+    # Subtract pose component from all embeddings
+    pose_pred = reg.predict(poses)                   # (N, D)
+    residuals = embs - pose_pred                     # (N, D)
+
+    # Shared UMAP for panels A and B (raw embeddings)
+    log.info("Running UMAP on raw embeddings (panels A & B)...")
+    reducer_raw = umap_lib.UMAP(n_components=2, random_state=42, n_jobs=1)
+    coords_raw  = reducer_raw.fit_transform(embs)
+
+    # UMAP for panel C (pose-residual embeddings)
+    log.info("Running UMAP on pose-residual embeddings (panel C)...")
+    reducer_res = umap_lib.UMAP(n_components=2, random_state=42, n_jobs=1)
+    coords_res  = reducer_res.fit_transform(residuals)
+
+    along_track = poses[:, 0]   # first pose dim = along_track (normalised)
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+
+    # Panel A: pose gradient
+    ax = axes[0]
+    sc = ax.scatter(
+        coords_raw[:, 0], coords_raw[:, 1],
+        c=along_track, cmap="plasma", s=8, alpha=0.7, linewidths=0,
+    )
+    plt.colorbar(sc, ax=ax, label="Along-track (normalised)")
+    ax.set_title("A — Raw embeddings\n(coloured by approach distance)", fontsize=11)
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+
+    # Panel B: domain labels on raw UMAP
+    ax = axes[1]
+    for dom_id, label in DOMAIN_LABELS.items():
+        mask = domains == dom_id
+        if mask.sum() == 0:
+            continue
+        ax.scatter(
+            coords_raw[mask, 0], coords_raw[mask, 1],
+            c=DOMAIN_COLORS[dom_id], label=label, s=8, alpha=0.7, linewidths=0,
+        )
+    ax.set_title("B — Raw embeddings\n(coloured by domain)", fontsize=11)
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    ax.legend(markerscale=3, fontsize=9)
+
+    # Panel C: domain labels on pose-residual UMAP
+    ax = axes[2]
+    for dom_id, label in DOMAIN_LABELS.items():
+        mask = domains == dom_id
+        if mask.sum() == 0:
+            continue
+        ax.scatter(
+            coords_res[mask, 0], coords_res[mask, 1],
+            c=DOMAIN_COLORS[dom_id], label=label, s=8, alpha=0.7, linewidths=0,
+        )
+    res_sil = silhouette_score(coords_res, domains,
+                               sample_size=min(2000, len(domains)))
+    ax.set_title(
+        f"C — Pose-residual embeddings\n(coloured by domain, silhouette={res_sil:.3f})",
+        fontsize=11,
+    )
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    ax.legend(markerscale=3, fontsize=9)
+
+    fig.suptitle(
+        "Pose accounts for embedding structure; residual reveals visual domain gap",
+        fontsize=13, y=1.02,
+    )
+    plt.tight_layout()
+
+    save_path = save_path or str(OUTPUTS_DIR / "pose_conditioned_gap.png")
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    log.info(f"Saved: {save_path}")
+    log.info(f"Pose-residual silhouette: {res_sil:.4f}")
     return save_path
 
 
