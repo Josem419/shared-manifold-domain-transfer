@@ -220,3 +220,4 @@ __marimo__/
 
 # Custom ignores for this project
 data/
+.*env/
