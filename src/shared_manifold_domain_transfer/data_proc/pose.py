@@ -6,14 +6,12 @@ geodetic projection is required.  However, the HuggingFace parquet export
 uses two conventions that differ from the aeronautical ODD frame — both
 are corrected inside ``PoseProcessor._batch_to_approach_frame``:
 
-RAW LARD (HuggingFace parquet)        APPROACH FRAME (this codebase)
-──────────────────────────────────    ──────────────────────────────────────
-along_track_distance  [+km, >0]  →   along_track_distance  [−m, <0]
-    correction: distance_m = −along_track_km × 1000
+along_track_distance: LARD stores as positive km (distance to threshold);
+                    converted to negative metres (aircraft-behind-LTP convention used in ODD).
 
-pitch  [~86°, graphics Z-up frame] →  pitch  [~−4°, aviation horizon]
-    convention: Z-up graphics maps 90° − pitch  to aviation nose-up angle
-    correction: aviation_pitch = pitch − 90°
+pitch angle: LARD stores in a graphics Z-up frame where a standard approach reads ≈86°.
+                Subtracting 90° maps to aviation convention where a −4° descent pitch
+                ≈ 86° − 90° = −4°.
 
 All other columns (lateral_path_angle, vertical_path_angle, roll, yaw) are
 passed through as-is; they are already in the correct sign/unit convention.
@@ -39,7 +37,7 @@ Classes:
     PoseVolumeSampler  — convex hull in normalised 6-DOF space + corridor limits
 
 ODD constants (ApproachLimits, DOMAIN1_LIMITS, DOMAIN2_LIMITS) live in
-``shared_manifold_domain_transfer.data.domain_odd`` and are re-exported here
+``shared_manifold_domain_transfer.data_proc.domain_odd`` and are re-exported here
 for backward-compatible imports.
 """
 
@@ -48,21 +46,18 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 from scipy.spatial import ConvexHull
 
-from shared_manifold_domain_transfer.data.domain_odd import (
+from shared_manifold_domain_transfer.data_proc.domain_odd import (
     ApproachLimits,
     DOMAIN1_LIMITS,
     DOMAIN2_LIMITS,
 )
 
 
-# ---------------------------------------------------------------------------
 # Column name resolution (LARD V2 uses consistent names, but keep fallbacks)
-# ---------------------------------------------------------------------------
-
 _ALONG_TRACK_CANDIDATES  = ["along_track_distance"]
 _LATERAL_ANGLE_CANDIDATES  = ["lateral_path_angle"]
 _VERTICAL_ANGLE_CANDIDATES = ["vertical_path_angle"]
@@ -85,10 +80,6 @@ def _ensure_degrees(values: np.ndarray, col: str) -> np.ndarray:
     return values  # LARD stores angles in degrees
 
 
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
-
 @dataclass
 class PoseStats:
     """Per-dimension mean and std computed from training split."""
@@ -98,11 +89,6 @@ class PoseStats:
 
 # ApproachLimits, DOMAIN1_LIMITS, DOMAIN2_LIMITS are defined in domain_odd
 # and imported at the top of this module.
-
-
-# ---------------------------------------------------------------------------
-# PoseProcessor
-# ---------------------------------------------------------------------------
 
 class PoseProcessor:
     """Converts LARD V2 metadata rows into normalised 6-DOF pose vectors.
@@ -121,9 +107,6 @@ class PoseProcessor:
     def __init__(self, stats: Optional[PoseStats] = None) -> None:
         self.stats = stats
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def fit(self, df: pd.DataFrame) -> "PoseProcessor":
         """Compute normalisation stats from a training-split dataframe."""
@@ -167,10 +150,6 @@ class PoseProcessor:
             return poses
         return poses * self.stats.std + self.stats.mean
 
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
     def _batch_to_approach_frame(self, df: pd.DataFrame) -> np.ndarray:
         cols = df.columns.tolist()
 
@@ -201,10 +180,6 @@ class PoseProcessor:
 def _raise(msg: str):
     raise ValueError(msg)
 
-
-# ---------------------------------------------------------------------------
-# PoseVolumeSampler
-# ---------------------------------------------------------------------------
 
 class PoseVolumeSampler:
     """Convex-hull membership in normalised 6-DOF pose space.
@@ -287,11 +262,6 @@ class PoseVolumeSampler:
         diff  = query_poses[:, None, :] - self.poses[None, :, :]  # (M, N, 6)
         dists = np.linalg.norm(diff, axis=-1)                      # (M, N)
         return dists.min(axis=1)                                    # (M,)
-
-
-# ---------------------------------------------------------------------------
-# Unit tests (python -m shared_manifold_domain_transfer.data.pose)
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import sys
