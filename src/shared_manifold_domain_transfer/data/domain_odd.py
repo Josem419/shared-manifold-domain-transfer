@@ -34,15 +34,14 @@ class ApproachLimits:
     max_lateral_deg:    float               = 3.0
     vertical_deg_range: Tuple[float, float] = (1.8, 5.2)
 
-    # Convenience accessors for plot helpers --------------------------------
+    # Convenience accessors for plot helpers 
 
     @property
     def lateral_range(self) -> Tuple[float, float]:
         """Symmetric lateral corridor as a (min, max) tuple."""
         return (-self.max_lateral_deg, self.max_lateral_deg)
 
-    # Mask ------------------------------------------------------------------
-
+    # Mask 
     def is_valid(self, raw_poses: np.ndarray) -> np.ndarray:
         """Return (N,) boolean mask: True where all corridor limits are met.
 
@@ -61,11 +60,7 @@ class ApproachLimits:
             & (vertical <= self.vertical_deg_range[1])
         )
 
-
-# ---------------------------------------------------------------------------
 # Named domain instances
-# ---------------------------------------------------------------------------
-
 DOMAIN1_LIMITS = ApproachLimits(
     along_track_range  = (-3000.0, -280.0),
     max_lateral_deg    = 3.0,
