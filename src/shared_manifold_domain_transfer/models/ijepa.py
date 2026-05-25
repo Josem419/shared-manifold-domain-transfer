@@ -19,12 +19,12 @@ from __future__ import annotations
 
 import logging
 import math
+import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.nn as nn
-from einops import rearrange
 
 log = logging.getLogger(__name__)
 
@@ -37,13 +37,11 @@ VIT_H14_NUM_HEADS  = 16
 PRETRAINED_URL = "https://dl.fbaipublicfiles.com/ijepa/IN22K-vit.h.14-900e.pth.tar"
 
 
-# ---------------------------------------------------------------------------
 # Lightweight ViT-H/14 implementation (matches I-JEPA checkpoint layout)
-# ---------------------------------------------------------------------------
-
 class Attention(nn.Module):
     def __init__(self, dim: int, num_heads: int, qkv_bias: bool = True) -> None:
         super().__init__()
+        # multi headed self-attention with optional bias for qkv projections (timm ViT default is True)
         self.num_heads = num_heads
         self.head_dim  = dim // num_heads
         self.scale     = self.head_dim ** -0.5
@@ -64,6 +62,7 @@ class Attention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, in_features: int, hidden_features: int, act_layer=nn.GELU) -> None:
         super().__init__()
+        # GELU activation, 2 layer MLP with hidden dimension = 4x input dim (timm default for ViTs)
         self.fc1  = nn.Linear(in_features, hidden_features)
         self.act  = act_layer()
         self.fc2  = nn.Linear(hidden_features, in_features)
@@ -75,6 +74,8 @@ class MLP(nn.Module):
 class Block(nn.Module):
     def __init__(self, dim: int, num_heads: int, mlp_ratio: float = 4.0) -> None:
         super().__init__()
+        # layer norm, attention, layer norm, and MLP
+        # this is our building block for the ViT, matching the I-JEPA context encoder architecture
         self.norm1 = nn.LayerNorm(dim)
         self.attn  = Attention(dim, num_heads)
         self.norm2 = nn.LayerNorm(dim)
@@ -106,8 +107,7 @@ class VisionTransformer(nn.Module):
         self.n_patches  = n_patches
 
         self.patch_embed = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
-        self.cls_token   = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.pos_embed   = nn.Parameter(torch.zeros(1, n_patches + 1, embed_dim))
+        self.pos_embed   = nn.Parameter(torch.zeros(1, n_patches, embed_dim))
 
         self.blocks = nn.ModuleList([
             Block(embed_dim, num_heads, mlp_ratio) for _ in range(depth)
@@ -123,25 +123,19 @@ class VisionTransformer(nn.Module):
         # Patchify
         x = self.patch_embed(x)                             # (B, D, H', W')
         x = x.flatten(2).transpose(1, 2)                   # (B, N, D)
-        # Prepend CLS token
-        cls = self.cls_token.expand(B, -1, -1)
-        x   = torch.cat([cls, x], dim=1)                   # (B, N+1, D)
-        x   = x + self.pos_embed
+        x = x + self.pos_embed
         # Transformer
         for blk in self.blocks:
             x = blk(x)
         x = self.norm(x)
 
         if return_patches:
-            return x[:, 1:, :]   # (B, N, D) — skip CLS
+            return x                 # (B, N, D)
 
-        return x[:, 0, :]         # (B, D) — CLS token mean-pool via CLS
+        return x.mean(1)             # (B, D) — mean pool over patches
 
 
-# ---------------------------------------------------------------------------
 # Public wrapper
-# ---------------------------------------------------------------------------
-
 class IJEPAEncoder(nn.Module):
     """
     Frozen I-JEPA context encoder.
@@ -175,10 +169,6 @@ class IJEPAEncoder(nn.Module):
         self._freeze()
         self.to(device)
         self._device = device
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     @torch.no_grad()
     def forward(
@@ -248,10 +238,6 @@ class IJEPAEncoder(nn.Module):
 
         return torch.stack(embeddings, dim=0)  # (B, 1280)
 
-    # ------------------------------------------------------------------
-    # Setup helpers
-    # ------------------------------------------------------------------
-
     def _load_weights(self, weights_path: str) -> None:
         path = Path(weights_path)
         if not path.exists():
@@ -274,6 +260,11 @@ class IJEPAEncoder(nn.Module):
 
         # Strip 'module.' prefix (DataParallel)
         state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+        # timm-style patch_embed uses proj sub-layer; remap to our flat Conv2d
+        state_dict = {
+            k.replace("patch_embed.proj.", "patch_embed."): v
+            for k, v in state_dict.items()
+        }
 
         missing, unexpected = self.encoder.load_state_dict(state_dict, strict=False)
         if missing:
@@ -291,13 +282,9 @@ class IJEPAEncoder(nn.Module):
         log.info("I-JEPA encoder frozen (no gradients).")
 
 
-# ---------------------------------------------------------------------------
 # Sanity check (python -m shared_manifold_domain_transfer.models.ijepa)
-# ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
-    import sys
-
+    
     print("=== IJEPAEncoder sanity check ===")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
