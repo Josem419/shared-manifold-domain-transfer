@@ -30,6 +30,8 @@ import click
 import torch
 from torch.utils.data import Dataset, DataLoader
 
+from shared_manifold_domain_transfer.data_proc.domain_odd import VALID_SPLITS
+
 from shared_manifold_domain_transfer.data_proc.pose import (
     PoseProcessor,
     PoseVolumeSampler,
@@ -47,14 +49,11 @@ log = logging.getLogger(__name__)
 _XPLANE_TAGS  = {"xplane", "x-plane", "xp11", "xp12"}
 _MSFS_TAGS    = {"msfs", "msfs2020", "microsoft flight simulator", "flsim"}
 
-# Corner coordinate columns — LARD stores 4 corners as separate x/y columns
-# or as a single array. We try both conventions.
+# Corner coordinate columns — try multiple naming conventions
 _CORNER_X_COLS = ["x1", "x2", "x3", "x4"]
 _CORNER_Y_COLS = ["y1", "y2", "y3", "y4"]
-_CORNER_ALT_COLS = [
-    "corner1_x", "corner2_x", "corner3_x", "corner4_x",
-    "corner1_y", "corner2_y", "corner3_y", "corner4_y",
-]
+# LARD V2 actual naming: x_TR, x_TL, x_BL, x_BR (Top-Right/Left, Bottom-Left/Right)
+_LARD_CORNER_PAIRS = [("x_TR", "y_TR"), ("x_TL", "y_TL"), ("x_BL", "y_BL"), ("x_BR", "y_BR")]
 # hf_config is the reliable persistent column ("xplane" or "flsim");
 # sim_tag is only added in-memory by visualize_dataset.py, not saved to parquet.
 _SIM_CANDIDATES = ["hf_config", "simulator", "sim", "source", "dataset", "domain"]
@@ -92,8 +91,8 @@ class LARDDataset(Dataset):
         image_size: int = IJEPA_IMAGE_SIZE,
         max_samples: Optional[int] = None,
     ) -> None:
-        assert split in ("domain1", "domain2", "holdout", "all"), \
-            f"split must be domain1|domain2|holdout|all, got '{split}'"
+        assert split in VALID_SPLITS, \
+            f"split must be one of {VALID_SPLITS}, got '{split}'"
 
         self.data_dir = Path(data_dir)
         self.split = split
@@ -159,8 +158,11 @@ class LARDDataset(Dataset):
         width, height = image_pil.size
 
         # Parse corners shape(4, 2) in pixel space, then normalise to [0,1]
-        corners_px = self._parse_corners(row)          # (4, 2) float32
-        corners_norm = corners_px / np.array([width, height], dtype=np.float32)  # (4, 2) in [0,1]
+        corners_px = self._parse_corners(row)
+        if corners_px is not None:
+            corners_norm = corners_px / np.array([width, height], dtype=np.float32)
+        else:
+            corners_norm = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float32)
 
         # Apply transforms to full image only
         image_tensor = self.img_transform(image_pil)   # (3, image_size, image_size)
@@ -238,6 +240,20 @@ class LARDDataset(Dataset):
             )
             return list(msfs_idx[outside])
 
+        if self.split == "domain1_matched":
+            # XPlane rows whose poses fall inside the Domain 2 nominal volume.
+            # Used for pose-controlled silhouette: both groups occupy the same
+            # geometric region so any remaining separation is purely visual style.
+            xplane_mask = sim_tags.isin(_XPLANE_TAGS)
+            xplane_idx  = np.where(xplane_mask.values)[0]
+            if self._domain2_sampler is None:
+                return list(xplane_idx)
+            inside = self._domain2_sampler.is_inside(
+                self._norm_poses[xplane_idx],
+                raw_poses=self._raw_poses[xplane_idx],
+            )
+            return list(xplane_idx[inside])
+
         return []
 
     def _load_image(self, row) -> Image.Image:
@@ -260,13 +276,20 @@ class LARDDataset(Dataset):
         """Parse 4 corner pixel coordinates → (4, 2) float32 array (x, y)."""
         cols = self._meta.columns.tolist()
 
-        # Try convention 1: x1,y1,x2,y2,x3,y3,x4,y4
+        # LARD V2: x_TR, y_TR, x_TL, y_TL, x_BL, y_BL, x_BR, y_BR
+        if all(x in cols and y in cols for x, y in _LARD_CORNER_PAIRS):
+            return np.array(
+                [[float(row[x]), float(row[y])] for x, y in _LARD_CORNER_PAIRS],
+                dtype=np.float32,
+            )
+
+        # x1,y1,x2,y2,x3,y3,x4,y4
         if all(c in cols for c in _CORNER_X_COLS + _CORNER_Y_COLS):
             xs = [float(row[c]) for c in _CORNER_X_COLS]
             ys = [float(row[c]) for c in _CORNER_Y_COLS]
             return np.array(list(zip(xs, ys)), dtype=np.float32)
 
-        # Try convention 2: corner1_x, corner1_y, ...
+        # corner1_x, corner1_y, ...
         alt_x_cols = [f"corner{i}_x" for i in range(1, 5)]
         alt_y_cols = [f"corner{i}_y" for i in range(1, 5)]
         if all(c in cols for c in alt_x_cols + alt_y_cols):
@@ -274,18 +297,15 @@ class LARDDataset(Dataset):
             ys = [float(row[c]) for c in alt_y_cols]
             return np.array(list(zip(xs, ys)), dtype=np.float32)
 
-        # Try convention 3: corners as a serialised list column
+        # Serialised list column
         corner_candidates = [c for c in cols if "corner" in c.lower()]
         if corner_candidates:
             raw = row[corner_candidates[0]]
             if isinstance(raw, str):
                 data = ast.literal_eval(raw)
-                corners = np.array(data, dtype=np.float32).reshape(4, 2)
-                return corners
+                return np.array(data, dtype=np.float32).reshape(4, 2)
 
-        log.warning("Could not parse corner coordinates — using full image as runway region.")
-        # Fallback: corners at the four image corners (norm [0,1])
-        return np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float32)
+        return None
 
     @staticmethod
     def _resolve(columns: List[str], candidates: List[str]) -> Optional[str]:
@@ -359,6 +379,19 @@ def make_loaders(
         image_size=image_size,
     )
 
+    # Step 5: Domain1 matched — XPlane inside Domain 2 nominal pose volume
+    log.info("Building Domain 1 matched (XPlane inside Domain 2 volume)...")
+    d1_matched = LARDDataset(
+        data_dir=data_dir,
+        split="domain1_matched",
+        pose_processor=pose_proc,
+        domain2_sampler=domain2_sampler,
+        augment=False,
+        image_size=image_size,
+        max_samples=max_samples,
+    )
+    log.info(f"LARDDataset: split='domain1_matched', n_samples={len(d1_matched)}")
+
     loader_kwargs = dict(
         batch_size=batch_size,
         num_workers=num_workers,
@@ -366,15 +399,17 @@ def make_loaders(
     )
 
     return {
-        "domain1_train": DataLoader(d1, shuffle=True, **loader_kwargs),
-        "domain2_train": DataLoader(d2, shuffle=True, **loader_kwargs),
-        "holdout_eval":  DataLoader(holdout, shuffle=False, **loader_kwargs),
+        "domain1_train":   DataLoader(d1, shuffle=True, **loader_kwargs),
+        "domain2_train":   DataLoader(d2, shuffle=True, **loader_kwargs),
+        "holdout_eval":    DataLoader(holdout, shuffle=False, **loader_kwargs),
+        "domain1_matched": DataLoader(d1_matched, shuffle=False, **loader_kwargs),
         # Expose datasets for downstream use (e.g. building pose index)
-        "_domain1_dataset":  d1,
-        "_domain2_dataset":  d2,
-        "_holdout_dataset":  holdout,
-        "_pose_processor":   pose_proc,
-        "_domain2_sampler":  domain2_sampler,
+        "_domain1_dataset":         d1,
+        "_domain2_dataset":         d2,
+        "_holdout_dataset":         holdout,
+        "_domain1_matched_dataset": d1_matched,
+        "_pose_processor":          pose_proc,
+        "_domain2_sampler":         domain2_sampler,
     }
 
 # quick test of dataset and loaders
