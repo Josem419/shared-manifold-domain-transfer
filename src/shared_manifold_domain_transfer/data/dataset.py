@@ -28,7 +28,11 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-from shared_manifold_domain_transfer.data.pose import PoseProcessor, PoseVolumeSampler
+from shared_manifold_domain_transfer.data.pose import (
+    PoseProcessor,
+    PoseVolumeSampler,
+    DOMAIN2_LIMITS,
+)
 from shared_manifold_domain_transfer.data.transforms import (
     get_train_transforms,
     get_val_transforms,
@@ -117,8 +121,11 @@ class LARDDataset(Dataset):
         else:
             self.pose_processor = pose_processor
 
-        # Compute raw (un-normalised) poses for hull building if needed
-        self._raw_poses = self.pose_processor._batch_to_enu(self._meta)
+        # Store both raw (physical units) and normalised poses.
+        # _raw_poses  — used with ApproachLimits.is_valid() (physical corridor check)
+        # _norm_poses — used with PoseVolumeSampler.is_inside() (convex hull)
+        self._raw_poses  = self.pose_processor.transform_raw(self._meta)
+        self._norm_poses = self.pose_processor.transform(self._meta)
 
         # Build domain2 hull sampler if not provided
         if domain2_sampler is None and split in ("holdout",):
@@ -209,16 +216,22 @@ class LARDDataset(Dataset):
         msfs_idx  = np.where(msfs_mask.values)[0]
 
         if self.split == "domain2":
-            # MSFS nominal: inside Domain 2 hull
+            # MSFS nominal: inside Domain 2 hull (hull check + corridor limits)
             if self._domain2_sampler is None:
                 # First time building — return all MSFS rows as domain2
                 return list(msfs_idx)
-            inside = self._domain2_sampler.is_inside(self._raw_poses[msfs_idx])
+            inside = self._domain2_sampler.is_inside(
+                self._norm_poses[msfs_idx],
+                raw_poses=self._raw_poses[msfs_idx],
+            )
             return list(msfs_idx[inside])
 
         if self.split == "holdout":
             # MSFS poses outside domain2 nominal volume
-            outside = self._domain2_sampler.is_outside(self._raw_poses[msfs_idx])
+            outside = self._domain2_sampler.is_outside(
+                self._norm_poses[msfs_idx],
+                raw_poses=self._raw_poses[msfs_idx],
+            )
             return list(msfs_idx[outside])
 
         return []
@@ -315,7 +328,10 @@ def make_loaders(
         augment=True,
         image_size=image_size,
     )
-    domain2_sampler = PoseVolumeSampler(d2_all._raw_poses[d2_all._indices])
+    domain2_sampler = PoseVolumeSampler(
+        d2_all._norm_poses[d2_all._indices],
+        limits=DOMAIN2_LIMITS,
+    )
 
     # Step 3: Re-build domain2 using the hull (nominal only)
     log.info("Re-filtering Domain 2 to nominal volume...")
