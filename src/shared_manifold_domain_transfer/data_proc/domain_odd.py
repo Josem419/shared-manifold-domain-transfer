@@ -64,11 +64,11 @@ class ApproachLimits:
 DOMAIN1_LIMITS = ApproachLimits(
     along_track_range  = (-3000.0, -280.0),
     max_lateral_deg    = 3.0,
-    vertical_deg_range = (1.8, 5.2),
+    vertical_deg_range = (2.0, 4.0),
 )
 
 DOMAIN2_LIMITS = ApproachLimits(
     along_track_range  = (-2500.0, -280.0),
-    max_lateral_deg    = 1.5,
-    vertical_deg_range = (2.5, 3.5),
+    max_lateral_deg    = 1.0,
+    vertical_deg_range = (2.8, 3.2),
 )
