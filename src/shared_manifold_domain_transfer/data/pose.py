@@ -2,27 +2,45 @@
 Pose preprocessing for LARD V2: runway-relative 6-DOF approach vectors.
 
 LARD already provides aircraft pose in runway-relative coordinates, so no
-geodetic conversion is required.  The 6-DOF vector used throughout this
-codebase is:
+geodetic projection is required.  However, the HuggingFace parquet export
+uses two conventions that differ from the aeronautical ODD frame — both
+are corrected inside ``PoseProcessor._batch_to_approach_frame``:
+
+RAW LARD (HuggingFace parquet)        APPROACH FRAME (this codebase)
+──────────────────────────────────    ──────────────────────────────────────
+along_track_distance  [+km, >0]  →   along_track_distance  [−m, <0]
+    correction: distance_m = −along_track_km × 1000
+
+pitch  [~86°, graphics Z-up frame] →  pitch  [~−4°, aviation horizon]
+    convention: Z-up graphics maps 90° − pitch  to aviation nose-up angle
+    correction: aviation_pitch = pitch − 90°
+
+All other columns (lateral_path_angle, vertical_path_angle, roll, yaw) are
+passed through as-is; they are already in the correct sign/unit convention.
+
+The 6-DOF vector layout after transformation:
 
     [0] along_track_distance   (metres, negative — aircraft behind LTP)
     [1] lateral_path_angle     (degrees, 0 = on centreline)
-    [2] vertical_path_angle    (degrees, negative — aircraft above runway)
+    [2] vertical_path_angle    (degrees, positive — ILS glide angle, ~3°)
     [3] roll                   (degrees)
-    [4] pitch                  (degrees)
+    [4] pitch                  (degrees, aviation — negative = nose down)
     [5] yaw                    (degrees)
 
 The LARD V2 Operational Design Domain (ODD), from the dataset README:
-    along_track:   -6 000 m to  -280 m  (from Landing Threshold Point)
+    along_track:   −6 000 m to  −280 m  (from Landing Threshold Point)
     lateral:       ±3°                  (from centreline)
-    vertical:      -1.8° to -5.2°       (w.r.t. Vertical Reference Point)
-    pitch:         -15° to +5°
+    vertical:      ≈ 1.8° to 5.2°       (ILS glideslope angle, positive)
+    pitch:         −15° to +5°          (aviation, after conversion)
     roll/yaw:      segment-dependent (see LARD paper)
 
 Classes:
     PoseProcessor      — fit normalisation stats; transform df → (N,6)
-    ApproachLimits     — physical approach-corridor filter (metres / degrees)
     PoseVolumeSampler  — convex hull in normalised 6-DOF space + corridor limits
+
+ODD constants (ApproachLimits, DOMAIN1_LIMITS, DOMAIN2_LIMITS) live in
+``shared_manifold_domain_transfer.data.domain_odd`` and are re-exported here
+for backward-compatible imports.
 """
 
 from __future__ import annotations
@@ -33,6 +51,12 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from scipy.spatial import ConvexHull
+
+from shared_manifold_domain_transfer.data.domain_odd import (
+    ApproachLimits,
+    DOMAIN1_LIMITS,
+    DOMAIN2_LIMITS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -72,67 +96,8 @@ class PoseStats:
     std:  np.ndarray  # (6,)
 
 
-@dataclass
-class ApproachLimits:
-    """Hard approach-corridor limits in physical LARD units.
-
-    All thresholds are in the native units of the LARD columns:
-        along_track_distance  — metres (negative values, aircraft behind LTP)
-        lateral_path_angle    — degrees (signed, 0 = on centreline)
-        vertical_path_angle   — degrees (negative, aircraft descending)
-
-    These limits are applied to the **raw** (un-normalised) pose vectors.
-    They are independent of the convex-hull test, which operates in
-    normalised space.
-
-    Usage example::
-
-        raw   = proc.transform_raw(df)    # physical units
-        norm  = proc.transform(df)        # normalised
-        mask  = DOMAIN2_LIMITS.is_valid(raw) & sampler.is_inside(norm)
-    """
-    along_track_range:    Tuple[float, float] = (-6000.0, -280.0)
-    max_lateral_deg:      float = 3.0
-    vertical_deg_range:   Tuple[float, float] = (-5.2, -1.8)
-
-    def is_valid(self, raw_poses: np.ndarray) -> np.ndarray:
-        """Return (N,) boolean mask: True where all corridor limits are met.
-
-        Args:
-            raw_poses: (N, 6) array in physical LARD units
-                       columns: [along_track, lateral, vertical, roll, pitch, yaw]
-        """
-        along    = raw_poses[:, 0]
-        lateral  = raw_poses[:, 1]
-        vertical = raw_poses[:, 2]
-
-        return (
-            (along   >= self.along_track_range[0])
-            & (along   <= self.along_track_range[1])
-            & (np.abs(lateral) <= self.max_lateral_deg)
-            & (vertical >= self.vertical_deg_range[0])
-            & (vertical <= self.vertical_deg_range[1])
-        )
-
-
-# Domain corridors grounded in the LARD V2 ODD.
-#
-# DOMAIN1_LIMITS — full LARD ODD (XPlane covers this entire volume).
-# DOMAIN2_LIMITS — tighter nominal corridor for MSFS.  Images from MSFS that
-#                  fall outside DOMAIN2_LIMITS but inside DOMAIN1_LIMITS form
-#                  the holdout split.  Tune these values once real data has
-#                  been downloaded and the actual distribution is known.
-DOMAIN1_LIMITS = ApproachLimits(
-    along_track_range  = (-3000.0, -280.0),
-    max_lateral_deg    = 3.0,
-    vertical_deg_range = (-5.2, -1.8),
-)
-
-DOMAIN2_LIMITS = ApproachLimits(
-    along_track_range  = (-2500.0, -280.0),  # tighter along-track window
-    max_lateral_deg    = 1.5,                # ±1.5° vs ±3° for D1
-    vertical_deg_range = (-3.5, -2.5),       # narrower glidepath band
-)
+# ApproachLimits, DOMAIN1_LIMITS, DOMAIN2_LIMITS are defined in domain_odd
+# and imported at the top of this module.
 
 
 # ---------------------------------------------------------------------------
@@ -216,12 +181,19 @@ class PoseProcessor:
         pitch_col    = _resolve(cols, _PITCH_CANDIDATES)          or _raise("pitch not found")
         yaw_col      = _resolve(cols, _YAW_CANDIDATES)            or _raise("yaw not found")
 
-        along    = df[along_col].values.astype(np.float32)
+        # along_track: LARD stores as positive km (distance to threshold);
+        # convert to negative metres (aircraft-behind-LTP convention used in ODD).
+        along = -df[along_col].values.astype(np.float32) * 1000.0
+
         lateral  = _ensure_degrees(df[lateral_col].values.astype(np.float32),  lateral_col)
         vertical = _ensure_degrees(df[vertical_col].values.astype(np.float32), vertical_col)
         rolls    = _ensure_degrees(df[roll_col].values.astype(np.float32),  roll_col)
-        pitches  = _ensure_degrees(df[pitch_col].values.astype(np.float32), pitch_col)
         yaws     = _ensure_degrees(df[yaw_col].values.astype(np.float32),   yaw_col)
+
+        # pitch: LARD stores in a graphics Z-up frame where a standard
+        # approach reads ≈86°.  Subtracting 90° maps to aviation convention
+        # where a −4° descent pitch ≈ 86° − 90° = −4°.
+        pitches = _ensure_degrees(df[pitch_col].values.astype(np.float32), pitch_col) - 90.0
 
         return np.column_stack([along, lateral, vertical, rolls, pitches, yaws])
 
@@ -326,21 +298,32 @@ if __name__ == "__main__":
 
     print("=== PoseProcessor / ApproachLimits / PoseVolumeSampler unit tests ===\n")
 
-    # ---- Test 1: _batch_to_approach_frame reads correct columns ----------
+    # ---- Test 1: _batch_to_approach_frame converts LARD raw → approach frame ---
+    #
+    # Raw LARD input:
+    #   along_track_distance: positive km   (e.g. 3.0 km from threshold)
+    #   pitch:                graphics frame (~86° for typical approach)
+    #
+    # Expected approach-frame output:
+    #   along_track: -3.0 km × 1000 = -3000 m
+    #   pitch:       86 − 90 = −4°
     df = pd.DataFrame({
-        "along_track_distance": [-3000.0, -1500.0, -500.0],
-        "lateral_path_angle":   [   -1.0,     0.5,    2.0],
-        "vertical_path_angle":  [   -3.5,    -3.0,   -2.5],
-        "roll":   [ 0.0,  1.0, -1.0],
-        "pitch":  [-3.0, -3.5, -4.0],
+        "along_track_distance": [3.0,   1.5,   0.5],   # positive km (raw LARD)
+        "lateral_path_angle":   [-1.0,  0.5,   2.0],
+        "vertical_path_angle":  [ 3.5,  3.0,   2.5],
+        "roll":   [  0.0,  1.0, -1.0],
+        "pitch":  [ 86.0, 86.5, 87.0],                 # graphics frame (~86°)
         "yaw":    [  0.0,  1.0,  2.0],
     })
     proc = PoseProcessor()
     raw = proc.transform_raw(df)
     assert raw.shape == (3, 6), f"Expected (3,6), got {raw.shape}"
-    assert raw[0, 0] == -3000.0, "along_track_distance passthrough failed"
-    print(f"  [PASS] _batch_to_approach_frame: shape={raw.shape}")
-    print(f"         row[0] = {raw[0]}")
+    assert np.isclose(raw[0, 0], -3000.0, atol=0.1), \
+        f"along_track conversion failed: expected -3000.0, got {raw[0, 0]}"
+    assert np.isclose(raw[0, 4], -4.0, atol=0.01), \
+        f"pitch conversion failed: expected -4.0, got {raw[0, 4]}"
+    print(f"  [PASS] LARD→approach frame: shape={raw.shape}")
+    print(f"         row[0] = {raw[0]}  (along=-3000m, pitch=-4°)")
 
     # ---- Test 2: fit/transform normalises correctly ----------------------
     proc.fit(df)
@@ -358,12 +341,12 @@ if __name__ == "__main__":
     # ---- Test 4: ApproachLimits.is_valid --------------------------------
     lim = DOMAIN2_LIMITS
     valid = lim.is_valid(raw)
-    # row 0: along_track=-3000 (D2 min is -5000, OK), lateral=-1 (OK), vertical=-3.5 (in [-4,-2.5], OK)
-    # row 1: along_track=-1500 (OK), lateral=0.5 (OK), vertical=-3.0 (OK)
-    # row 2: along_track=-500 (in [-5000,-400] OK), lateral=2.0 (>1.5 — FAIL)
-    assert valid[0] and valid[1] and not valid[2], \
+    # row 0: along=-3000 (in [-2500,-280]? NO: -3000 < -2500 — FAIL)
+    # row 1: along=-1500 (OK), lateral=0.5 (OK), vertical=3.0 (in [2.5,3.5] OK)
+    # row 2: along=-500  (OK), lateral=2.0 (>1.5 — FAIL)
+    assert not valid[0] and valid[1] and not valid[2], \
         f"ApproachLimits.is_valid gave unexpected result: {valid}"
-    print(f"  [PASS] ApproachLimits.is_valid: {valid} (row 2 correctly rejected)")
+    print(f"  [PASS] ApproachLimits.is_valid: {valid} (rows 0,2 correctly rejected)")
 
     # ---- Test 5: DOMAIN1_LIMITS is strictly wider than DOMAIN2_LIMITS ---
     valid_d1 = DOMAIN1_LIMITS.is_valid(raw)
