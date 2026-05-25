@@ -1,2 +1,2 @@
-# runway_landing_scene_gen
-Repo for synthetic data generation of aircraft on approach via VAE's and Diffusion Models
+# shared_manifold_domain_transfer
+A repo for experiment in domain transfer for out of ODD domain, using a shared manifold approach of in-ODD synthetic domain and out-of-ODD real domain. The data is from the LARD dataset, which contains images and pose data of aircraft approaches to a runway. The goal is to train a model that can transfer knowledge from the synthetic domain to the real domain, and vice versa, by learning a shared representation of the underlying manifold of the data. The code is organized into several modules, including data processing, model training, and evaluation. The README provides an overview of the project, instructions for setting up the environment, and guidelines for running experiments.
