@@ -22,6 +22,7 @@ from typing import Tuple
 
 import numpy as np
 
+VALID_SPLITS = ("domain1", "domain2", "holdout", "all", "domain1_matched")
 
 @dataclass
 class ApproachLimits:
