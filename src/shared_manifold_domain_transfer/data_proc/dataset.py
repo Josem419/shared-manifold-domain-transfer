@@ -28,12 +28,12 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-from shared_manifold_domain_transfer.data.pose import (
+from shared_manifold_domain_transfer.data_proc.pose import (
     PoseProcessor,
     PoseVolumeSampler,
     DOMAIN2_LIMITS,
 )
-from shared_manifold_domain_transfer.data.transforms import (
+from shared_manifold_domain_transfer.data_proc.transforms import (
     get_train_transforms,
     get_val_transforms,
     IJEPA_IMAGE_SIZE,
