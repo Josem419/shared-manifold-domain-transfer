@@ -31,7 +31,6 @@ from PIL import Image
 matplotlib.use("Agg")
 
 from shared_manifold_domain_transfer.data.domain_odd import (
-    ApproachLimits,
     DOMAIN1_LIMITS,
     DOMAIN2_LIMITS,
 )
@@ -74,10 +73,6 @@ def load_image(row: pd.Series, data_dir: Path) -> Optional[Image.Image]:
     except Exception:
         return None
 
-
-# ---------------------------------------------------------------------------
-# Figure 1: Sample images
-# ---------------------------------------------------------------------------
 
 def plot_sample_images(
     df: pd.DataFrame,
@@ -145,10 +140,6 @@ def plot_sample_images(
     log.info(f"Saved → {output_path}")
 
 
-# ---------------------------------------------------------------------------
-# Figure 2: Approach-parameter distributions
-# ---------------------------------------------------------------------------
-
 def plot_approach_distributions(df: pd.DataFrame, output_path: Path) -> None:
     """Histograms of along_track_distance, lateral_path_angle, vertical_path_angle."""
     params = [
@@ -188,10 +179,6 @@ def plot_approach_distributions(df: pd.DataFrame, output_path: Path) -> None:
     plt.close(fig)
     log.info(f"Saved → {output_path}")
 
-
-# ---------------------------------------------------------------------------
-# Figure 3: 2D approach cone scatter
-# ---------------------------------------------------------------------------
 
 def plot_approach_cone(df: pd.DataFrame, output_path: Path) -> None:
     """Scatter plots showing the 2D approach cone."""
@@ -255,11 +242,6 @@ def _draw_corridor_box(ax, x_range, y_range, colour, label):
     )
     ax.add_patch(rect)
 
-
-# ---------------------------------------------------------------------------
-# Figure 4: ODD label coverage + attitude
-# ---------------------------------------------------------------------------
-
 def plot_odd_coverage(df: pd.DataFrame, output_path: Path) -> None:
     """runway_in_cone counts and attitude angle distributions."""
     fig, axes = plt.subplots(1, 3, figsize=(14, 4))
@@ -305,10 +287,6 @@ def plot_odd_coverage(df: pd.DataFrame, output_path: Path) -> None:
     plt.close(fig)
     log.info(f"Saved → {output_path}")
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 @click.command()
 @click.option("--data-dir",   default="data/lard",    show_default=True,
