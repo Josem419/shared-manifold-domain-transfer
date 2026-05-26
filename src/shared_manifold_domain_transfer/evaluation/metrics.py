@@ -201,14 +201,15 @@ def maximum_mean_discrepancy_rbf_kernel(
         sq   = (diff ** 2).sum(-1)                # (N, M)
         return torch.exp(-sq / (2.0 * sigma ** 2))
 
-    kaa = rbf(a, a)
-    kbb = rbf(b, b)
-    kab = rbf(a, b)
+    kaa = rbf(a, a)  # (N, N) within-set kernel for domain A — measures self-similarity
+    kbb = rbf(b, b)  # (M, M) within-set kernel for domain B — measures self-similarity
+    kab = rbf(a, b)  # (N, M) cross-set kernel — measures similarity between domains
 
     n, m = a.shape[0], b.shape[0]
-    # Unbiased: exclude diagonal for same-set kernels
-    kaa_off = (kaa.sum() - kaa.trace()) / (n * (n - 1))
-    kbb_off = (kbb.sum() - kbb.trace()) / (m * (m - 1))
-    kab_mean = kab.mean()
+    # Unbiased estimator: subtract diagonal (self-similarity, k(x,x)=1) before averaging,
+    # so same-set terms are not inflated by the trivially perfect self-kernel values.
+    kaa_off = (kaa.sum() - kaa.trace()) / (n * (n - 1))  # mean off-diagonal of kaa
+    kbb_off = (kbb.sum() - kbb.trace()) / (m * (m - 1))  # mean off-diagonal of kbb
+    kab_mean = kab.mean()  # mean cross-kernel (no diagonal to exclude; all pairs are cross-domain)
 
     return float(kaa_off + kbb_off - 2.0 * kab_mean)
