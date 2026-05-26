@@ -28,7 +28,7 @@ from sklearn.metrics import silhouette_score
 from tqdm import tqdm
 
 from shared_manifold_domain_transfer.evaluation.metrics import (
-    frechet_distance, maximum_mean_discrepancy
+    frechet_distance_between_embedding_sets, maximum_mean_discrepancy_rbf_kernel
 )
 
 log = logging.getLogger(__name__)
@@ -133,8 +133,8 @@ def plot_domain_separation(
     if len(d1_emb) > 10 and len(d2_emb) > 10:
         # Subsample for FD (expensive)
         n_fd = min(500, len(d1_emb), len(d2_emb))
-        fd  = frechet_distance(d1_emb[:n_fd], d2_emb[:n_fd])
-        mmd = maximum_mean_discrepancy(d1_emb[:n_fd], d2_emb[:n_fd])
+        fd  = frechet_distance_between_embedding_sets(d1_emb[:n_fd], d2_emb[:n_fd])
+        mmd = maximum_mean_discrepancy_rbf_kernel(d1_emb[:n_fd], d2_emb[:n_fd])
         log.info(f"Fréchet Distance: {fd:.4f}")
         log.info(f"MMD:              {mmd:.6f}")
         print(f"\n--- Domain Gap Metrics ---")
