@@ -202,7 +202,7 @@ def maximum_mean_discrepancy_rbf_kernel(
         return torch.exp(-sq / (2.0 * sigma ** 2))
 
     kaa = rbf(a, a)  # (N, N) within-set kernel for domain A — measures self-similarity
-    kbb = rbf(b, b)  # (M, M) within-set kernel for domain B — measures self-similarity
+    kbb = rbf(b, b)  # (M, M) within-set kernel for domain B — measures self-similaritys
     kab = rbf(a, b)  # (N, M) cross-set kernel — measures similarity between domains
 
     n, m = a.shape[0], b.shape[0]
