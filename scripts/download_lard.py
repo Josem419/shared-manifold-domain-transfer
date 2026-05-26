@@ -66,16 +66,28 @@ def inspect_dataset(configs: list[str]) -> None:
                 print(f"  {k}: {type(v).__name__} = {str(v)[:80]}")
 
 
+def _flush_rows(rows: list[dict], parquet_path: Path) -> None:
+    """Append a batch of metadata rows to the parquet file on disk."""
+    df = pd.DataFrame(rows)
+    if parquet_path.exists():
+        existing = pd.read_parquet(parquet_path)
+        df = pd.concat([existing, df], ignore_index=True)
+    df.to_parquet(parquet_path, index=False)
+
+
 def download_lard(
     output_dir: str,
     configs: list[str] = DEFAULT_CONFIGS,
     hf_splits: list[str] = ("train",),
     max_per_split: int | None = None,
+    save_every: int = 200,
 ) -> None:
     """Download LARD V2 configs and save images + parquet metadata to disk.
 
-    When max_per_split is set, uses HuggingFace streaming mode so only the
-    requested rows are downloaded (no full shard files needed).
+    Always uses HuggingFace streaming so images are fetched and saved one at a
+    time without loading the full dataset into memory.  Metadata is flushed to
+    disk every *save_every* images so progress is preserved if the process is
+    interrupted.
 
     Output structure::
 
@@ -95,26 +107,36 @@ def download_lard(
         sim_dir      = output_dir / sim_dir_name
         img_dir      = sim_dir / "images"
         img_dir.mkdir(parents=True, exist_ok=True)
+        parquet_path = sim_dir / "metadata.parquet"
 
-        all_rows: list[dict] = []
+        # Track already-downloaded indices so a resumed run skips them.
+        done_indices: set[str] = set()
+        if parquet_path.exists():
+            existing_df = pd.read_parquet(parquet_path, columns=["image_path"])
+            done_indices = set(existing_df["image_path"].tolist())
+            log.info(f"  Resuming — {len(done_indices)} images already saved.")
 
         for hf_split in hf_splits:
-            log.info(f"Loading {DATASET_ID} config='{config}' split='{hf_split}'...")
+            log.info(f"Streaming {DATASET_ID} config='{config}' split='{hf_split}'...")
 
+            ds_iter = hf_load(DATASET_ID, config, split=hf_split, streaming=True)
             if max_per_split is not None:
-                # Streaming avoids downloading full shard files (~400 MB each)
-                # when we only need a small sample.
-                ds_iter = hf_load(DATASET_ID, config, split=hf_split, streaming=True)
                 ds_iter = ds_iter.take(max_per_split)
-                items   = list(ds_iter)
-            else:
-                ds    = hf_load(DATASET_ID, config, split=hf_split)
-                items = list(ds)
 
-            log.info(f"  {len(items)} samples to save")
+            pending_rows: list[dict] = []
+            saved = 0
+            skipped = 0
 
-            for i, item in enumerate(items):
-                # --- image ---
+            for i, item in enumerate(ds_iter):
+                img_filename = f"{config}_{hf_split}_{i:06d}.jpg"
+                rel_path     = f"{sim_dir_name}/images/{img_filename}"
+
+                # Skip already-downloaded images (resume support).
+                if rel_path in done_indices:
+                    skipped += 1
+                    continue
+
+                # --- decode image ---
                 img = item.get("image")
                 if img is None:
                     log.warning(f"No image at index {i}; skipping")
@@ -126,34 +148,31 @@ def download_lard(
                         log.warning(f"Could not decode image {i}: {exc}; skipping")
                         continue
 
-                img_filename = f"{config}_{hf_split}_{i:06d}.jpg"
-                img_path     = img_dir / img_filename
+                img_path = img_dir / img_filename
                 img.save(img_path, quality=95)
+                # Explicitly close to release memory immediately.
+                img.close()
 
-                # --- metadata row ---
+                # --- accumulate metadata ---
                 row = {k: v for k, v in item.items() if k != "image"}
-                row["image_path"] = str(img_path.relative_to(output_dir))
+                row["image_path"] = rel_path
                 row["hf_split"]   = hf_split
                 row["hf_config"]  = config
-                all_rows.append(row)
+                pending_rows.append(row)
+                saved += 1
 
-                if (i + 1) % 50 == 0:
-                    log.info(f"  [{config}/{hf_split}] {i+1}/{len(items)}")
+                if saved % save_every == 0:
+                    _flush_rows(pending_rows, parquet_path)
+                    pending_rows = []
+                    log.info(f"  [{config}/{hf_split}] {saved} saved (flushed to parquet)")
 
-        if not all_rows:
-            log.warning(f"No rows collected for config '{config}'")
-            continue
+            # Flush any remaining rows.
+            if pending_rows:
+                _flush_rows(pending_rows, parquet_path)
 
-        df = pd.DataFrame(all_rows)
-        parquet_path = sim_dir / "metadata.parquet"
-
-        # Append to existing file if present
-        if parquet_path.exists():
-            existing = pd.read_parquet(parquet_path)
-            df = pd.concat([existing, df], ignore_index=True)
-
-        df.to_parquet(parquet_path, index=False)
-        log.info(f"Saved {len(df)} rows → {parquet_path}")
+            log.info(
+                f"  [{config}/{hf_split}] done — {saved} saved, {skipped} skipped (already existed)"
+            )
 
     log.info("\nDownload complete.")
     _print_summary(output_dir)
@@ -187,19 +206,22 @@ def cli():
               show_default=True,
               help="HF split to download (repeat for multiple).")
 @click.option("--max-per-split", type=int, default=None,
-              help="Max samples per (config, split) pair. Uses streaming — no full shard download.")
-def download_cmd(output_dir, configs, hf_splits, max_per_split):
+              help="Max samples per (config, split) pair.")
+@click.option("--save-every",    type=int, default=200, show_default=True,
+              help="Flush metadata to parquet after this many images (lower = more resume-friendly).")
+def download_cmd(output_dir, configs, hf_splits, max_per_split, save_every):
     """Download LARD V2 images and metadata to OUTPUT_DIR.
 
-    Saves one subdirectory per simulator with images/ and metadata.parquet.
-    When --max-per-split is set, uses HuggingFace streaming so only the
-    requested rows are fetched (avoids downloading ~400 MB shard files).
+    Always uses HuggingFace streaming — images are fetched and saved one at a
+    time so the full dataset is never loaded into memory.  Progress is flushed
+    to parquet every --save-every images so the download can be safely resumed.
     """
     download_lard(
         output_dir=output_dir,
         configs=list(configs),
         hf_splits=list(hf_splits),
         max_per_split=max_per_split,
+        save_every=save_every,
     )
 
 
