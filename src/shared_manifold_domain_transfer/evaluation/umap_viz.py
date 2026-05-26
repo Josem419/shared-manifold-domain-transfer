@@ -210,6 +210,18 @@ def plot_pose_coverage(
     return save_path
 
 
+# TODO: airport/runway-stratified manifold analysis
+#   The LARD parquet has `airport` (ICAO code) and `runway` columns for all samples,
+#   and the cached .npz files store `img_paths` that join 1-to-1 back to the parquet.
+#   Worth investigating:
+#     - Does the domain gap cluster by airport (geometry/lighting per-airport)?
+#     - Are certain airports already well-aligned (small per-airport FD/MMD)?
+#     - Does runway heading/geometry (encoded in the runway ID) explain UMAP structure
+#       independent of the simulator domain?
+#   Entry point: load npz img_paths, join to parquet on `image_path`, attach
+#   `airport`+`runway` as colour labels in plot_umap_grid / a new plot_airport_gap fn.
+
+
 def plot_pose_conditioned_gap(
     embeddings_dict: Dict[str, np.ndarray],
     save_path: Optional[str] = None,
