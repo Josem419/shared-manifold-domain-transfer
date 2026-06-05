@@ -1,0 +1,54 @@
+defaults:
+  - _self_
+
+model:
+  conditioning: "manifold"   # "manifold" | "pose_mlp"
+  manifold_dim: 64
+  pose_dim: 6
+  unet_base_channels: 64
+  time_embed_dim: 256
+
+diffusion:
+  ddpm_timesteps: 1000
+  beta_start: 1.0e-4
+  beta_end: 0.02
+
+inference:
+  knn_k: 10
+  knn_sigma: 1.0
+
+training:
+  lr: 2.0e-4
+  batch_size: 32
+  max_epochs: 50
+  gradient_accumulation_steps: 1
+  grad_clip: 1.0
+  val_every_n_epochs: 5
+
+data:
+  data_dir: "data/"
+  image_size: 224
+  num_workers: 4
+
+mflow:
+  checkpoint: null  # path to trained M-flow checkpoint
+
+checkpoint:
+  save_dir: "outputs/checkpoints/diffusion"
+  save_top_k: 3
+
+hydra:
+  run:
+    dir: outputs/runs/diffusion/${now:%Y-%m-%d_%H-%M-%S}
+
+profiles:
+  local:
+    training:
+      batch_size: 4
+      max_epochs: 2
+      gradient_accumulation_steps: 8
+  aws:
+    training:
+      batch_size: 32
+      max_epochs: 50
+      gradient_accumulation_steps: 1

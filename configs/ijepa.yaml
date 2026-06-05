@@ -1,0 +1,14 @@
+model:
+  pretrained_weights: "https://dl.fbaipublicfiles.com/ijepa/IN22K-vit.h.14-900e.pth.tar"
+  embed_dim: 1280
+  patch_size: 14
+  image_size: 224
+
+inference:
+  batch_size: 64
+  num_workers: 4
+  device: "cuda"
+
+cache:
+  enabled: true
+  cache_dir: "outputs/embeddings_cache"

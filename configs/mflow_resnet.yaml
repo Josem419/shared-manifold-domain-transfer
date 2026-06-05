@@ -1,0 +1,47 @@
+defaults:
+  - _self_
+
+model:
+  ambient_dim: 2048        # frozen ResNet-50 avgpool features
+  manifold_dim: 256
+  noise_dim: 1792          # ambient_dim - manifold_dim
+  n_coupling_layers: 8
+  hidden_dim: 256
+  pose_dim: 6
+  pose_hidden_dim: 64
+  cond_flow: true
+
+training:
+  lr: 1e-4
+  batch_size: 128
+  max_epochs: 100
+  early_stopping_patience: 10
+  val_every_n_epochs: 5
+  gradient_accumulation_steps: 1
+  lambda_likelihood: 0.1
+  lambda_geometry: 0.01
+  lambda_pose: 1.0
+  grad_clip: 1.0
+
+data:
+  data_dir: "data/lard_20k"
+  image_size: 224
+  num_workers: 4
+
+ijepa:
+  weights_path: ""          # not used - prebuilt NPZs provided
+  cache_embeddings: false
+  embeddings_cache_dir: "outputs/embeddings_cache"
+  d1_prebuilt_npz: "outputs/embeddings/lard_20k/d1_resnet.npz"
+  d2_prebuilt_npz: "outputs/embeddings/lard_20k/d2_resnet.npz"
+
+run:
+  name: "resnet_cond_256"
+
+checkpoint:
+  save_dir: "outputs/checkpoints/mflow_${run.name}"
+  save_top_k: 3
+
+hydra:
+  run:
+    dir: outputs/runs/mflow/${now:%Y-%m-%d_%H-%M-%S}
