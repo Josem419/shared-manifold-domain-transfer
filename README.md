@@ -187,4 +187,3 @@ L_cons = MSE(head(z*), sg[head(z_nn)])
 | Baseline (supervised only) | 0.325 | 0.256 | 0.456 | 0.212 | — |
 | Augmented (manifold-NN consistency) | 0.326 | 0.264 | 0.474 | 0.220 | +0.009 ↑ |
 
-See [RESULTS.md](RESULTS.md) for full ablation results.
