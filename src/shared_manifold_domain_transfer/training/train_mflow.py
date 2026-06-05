@@ -373,7 +373,7 @@ class MFlowTrainer:
         log.info(f"  Best val total loss:   {best_val_loss:.4f}")
         log.info(f"  Final train recon MSE: {best_recon:.4f}")
         if best_recon < 0.5:
-            log.info("  [GO] Reconstruction MSE < 0.5. M-Flow looking good.")
+            log.info("  Reconstruction MSE < 0.5. M-Flow looking good.")
         else:
             log.warning(
                 f"  Reconstruction MSE = {best_recon:.4f} > 0.5. "
