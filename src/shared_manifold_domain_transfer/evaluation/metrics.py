@@ -92,8 +92,8 @@ def semantic_fidelity_ijepa_cosine(
 
     Args:
         encoder:        IJEPAEncoder (frozen, eval mode)
-        generated_crop: (B, 3, H, W) — runway region of generated image
-        gt_crop:        (B, 3, H, W) — runway region of ground truth image
+        generated_crop: (B, 3, H, W) -  runway region of generated image
+        gt_crop:        (B, 3, H, W) -  runway region of ground truth image
 
     Returns:
         mean cosine similarity (float)
@@ -163,27 +163,41 @@ def maximum_mean_discrepancy_rbf_kernel(
     emb_a: np.ndarray,
     emb_b: np.ndarray,
     sigma: float | None = None,
+    max_samples: int = 2000,
 ) -> float:
     """
     Unbiased Maximum Mean Discrepancy (MMD) estimate using a 
     Radial Basis Function (Gaussian) kernel.
 
     The RBF kernel measures similarity between two vectors by how close they
-    are: k(x,y) = exp(-‖x−y‖² / 2σ²). MMD is zero when both sets are drawn
+    are: k(x,y) = exp(-‖x−y‖^2 / 2*sigma^2). MMD is zero when both sets are drawn
     from the same distribution and positive otherwise.
 
     sigma defaults to the median heuristic (median pairwise distance over a
     random subsample of up to 500 points from each set). This avoids kernel
-    saturation in high-dimensional spaces where a fixed σ=1.0 causes all
+    saturation in high-dimensional spaces where a fixed sigma=1.0 causes all
     pairwise kernel values to collapse near zero.
+
+    max_samples caps the number of points used for the kernel computation.
+    The N×N kernel matrix is O(N^2·D) in memory; 2000 points at D=1280 needs
+    ~20GB, so capping is essential for large datasets. Default 2000 fits in
+    ~1.5GB at D=64 (z-space) or ~20GB at D=1280 (ambient). Adjust downward
+    if running in ambient space with limited memory.
 
     Args:
         emb_a, emb_b: (N, D) and (M, D) float arrays
-        sigma: RBF bandwidth. If None, computed via median heuristic.
+        sigma:        RBF bandwidth. If None, computed via median heuristic.
+        max_samples:  Maximum points from each set for kernel computation.
 
     Returns:
         mmd: float (≥ 0)
     """
+    rng = np.random.default_rng(0)
+    if len(emb_a) > max_samples:
+        emb_a = emb_a[rng.choice(len(emb_a), max_samples, replace=False)]
+    if len(emb_b) > max_samples:
+        emb_b = emb_b[rng.choice(len(emb_b), max_samples, replace=False)]
+
     a = torch.tensor(emb_a, dtype=torch.float32)
     b = torch.tensor(emb_b, dtype=torch.float32)
 
@@ -201,9 +215,9 @@ def maximum_mean_discrepancy_rbf_kernel(
         sq   = (diff ** 2).sum(-1)                # (N, M)
         return torch.exp(-sq / (2.0 * sigma ** 2))
 
-    kaa = rbf(a, a)  # (N, N) within-set kernel for domain A — measures self-similarity
-    kbb = rbf(b, b)  # (M, M) within-set kernel for domain B — measures self-similaritys
-    kab = rbf(a, b)  # (N, M) cross-set kernel — measures similarity between domains
+    kaa = rbf(a, a)  # (N, N) within-set kernel for domain A - measures self-similarity
+    kbb = rbf(b, b)  # (M, M) within-set kernel for domain B - measures self-similarity
+    kab = rbf(a, b)  # (N, M) cross-set kernel - measures similarity between domains
 
     n, m = a.shape[0], b.shape[0]
     # Unbiased estimator: subtract diagonal (self-similarity, k(x,x)=1) before averaging,
