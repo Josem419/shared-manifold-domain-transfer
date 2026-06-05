@@ -393,14 +393,12 @@ def plot_distance_vs_error(
             ``pose_distances`` (M,) and ``jepa_cosine`` (M,).
     """
     model_colors = {
-        "A_diffusion_only":  "#E53935",
-        "B_resnet_mflow":    "#FB8C00",
-        "C_ijepa_mflow":     "#43A047",
+        "baseline":       "#FB8C00",
+        "augmented":      "#43A047",
     }
     model_labels = {
-        "A_diffusion_only": "A: Diffusion only (pose MLP)",
-        "B_resnet_mflow":   "B: ResNet50 + M-Flow",
-        "C_ijepa_mflow":    "C: I-JEPA + M-Flow (ours)",
+        "baseline":  "Baseline (supervised only)",
+        "augmented": "Augmented (manifold-NN consistency)",
     }
 
     fig, ax = plt.subplots(figsize=(10, 7))
